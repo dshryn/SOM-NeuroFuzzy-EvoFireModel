@@ -1,1 +1,34 @@
 data/raw/
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# VS Code
+.vscode/
+
+# Colab
+*.ipynb
+
+# Data files (optional - keep if dataset is large)
+data/
+
+# Temporary files
+*.tmp
+*.bak

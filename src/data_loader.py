@@ -5,12 +5,11 @@ import os
 
 class DataLoader:
 
-    def __init__(self, modis_path, weather_path, output_path):
-        self.modis_path = modis_path
+    def __init__(self, fires_path, weather_path, output_path):
+        self.fires_path = fires_path
         self.weather_path = weather_path
         self.output_path = output_path
 
-        # static
         self.elevation_map = {
             "Almora": 1650,
             "Dehradun": 640,
@@ -18,18 +17,40 @@ class DataLoader:
             "Nainital": 2084
         }
 
-    def load_modis_data(self):
-        print("Loading MODIS files...")
-        files = glob.glob(os.path.join(self.modis_path, "*.csv"))
-        df_list = [pd.read_csv(file) for file in files]
-        modis = pd.concat(df_list, ignore_index=True)
+    def load_fire_data(self):
 
-        modis['acq_date'] = pd.to_datetime(modis['acq_date'])
+        print("Loading fire Excel files...")
 
-        return modis
+        files = glob.glob(os.path.join(self.fires_path, "*.xlsx"))
 
+        if len(files) == 0:
+            raise ValueError("No fire files found.")
+
+        df_list = []
+
+        for file in files:
+            df = pd.read_excel(file)
+            df_list.append(df)
+
+        fires = pd.concat(df_list, ignore_index=True)
+
+        fires['acq_date'] = pd.to_datetime(
+            fires['acq_date'], errors='coerce'
+        ).dt.tz_localize(None)
+
+        fires = fires.dropna(subset=['acq_date'])
+
+        fires = fires[['latitude', 'longitude', 'acq_date', 'confidence']]
+
+        print("Fire data shape:", fires.shape)
+
+        return fires
+
+    # ---------------------------------------------------
+    # Assign district by coordinates
+    # ---------------------------------------------------
     def assign_district(self, lat, lon):
-        # approx
+
         if 29.5 <= lat <= 30.5 and 79 <= lon <= 80:
             return "Almora"
         elif 30 <= lat <= 31 and 77.8 <= lon <= 78.5:
@@ -41,107 +62,135 @@ class DataLoader:
         else:
             return None
 
-    def create_fire_indicator(self, modis):
-        print("Assigning districts to fire points...")
-        modis['district'] = modis.apply(
-            lambda x: self.assign_district(x['latitude'], x['longitude']), axis=1
+    # ---------------------------------------------------
+    # Create daily fire indicator
+    # ---------------------------------------------------
+    def create_fire_indicator(self, fires):
+
+        fires['district'] = fires.apply(
+            lambda x: self.assign_district(x['latitude'], x['longitude']),
+            axis=1
         )
 
-        modis = modis.dropna(subset=['district'])
+        fires = fires.dropna(subset=['district'])
 
         fire_daily = (
-            modis.groupby(['acq_date', 'district'])
+            fires.groupby(['acq_date', 'district'])
             .size()
             .reset_index(name='fire_count')
         )
 
         fire_daily['fire_occurred'] = 1
 
+        print("Fire daily shape:", fire_daily.shape)
+
         return fire_daily[['acq_date', 'district', 'fire_occurred']]
 
+    # ---------------------------------------------------
+    # LOAD WEATHER DATA
+    # ---------------------------------------------------
     def load_weather_data(self):
-        print("Loading weather data...")
-        weather = pd.read_csv(self.weather_path)
 
-        weather['date'] = pd.to_datetime(weather['date'])
+        print("Loading weather Excel files...")
 
-        weather = weather[[
-            'date',
-            'district',
-            'temperature_2m',
-            'relative_humidity_2m',
-            'precipitation',
-            'wind_speed_10m'
-        ]]
+        files = glob.glob(os.path.join(self.weather_path, "*.xlsx"))
 
-        weather = weather.rename(columns={
-            'temperature_2m': 'temp',
-            'relative_humidity_2m': 'humidity',
-            'precipitation': 'rain',
-            'wind_speed_10m': 'wind'
-        })
+        if len(files) == 0:
+            raise ValueError("No weather files found.")
+
+        df_list = []
+
+        for file in files:
+
+            district_name = os.path.basename(file).split(".")[0].strip()
+
+            # Ensure standardized naming
+            district_name = district_name.title()
+
+            df = pd.read_excel(file)
+
+            df['date'] = pd.to_datetime(
+                df['date'], errors='coerce'
+            ).dt.tz_localize(None)
+
+            df = df.dropna(subset=['date'])
+
+            df = df.rename(columns={
+                'temperature_2m': 'temp',
+                'relative_humidity_2m': 'humidity',
+                'wind_speed_10m': 'wind'
+            })
+
+            # Ensure rain column exists
+            if 'rain' not in df.columns:
+                if 'precipitation' in df.columns:
+                    df['rain'] = df['precipitation']
+                else:
+                    df['rain'] = 0
+
+            df['district'] = district_name
+
+            df = df[['date', 'district', 'temp', 'humidity', 'rain', 'wind']]
+
+            df_list.append(df)
+
+        weather = pd.concat(df_list, ignore_index=True)
+
+        print("Weather data shape:", weather.shape)
 
         return weather
 
+    # ---------------------------------------------------
+    # MERGE EVERYTHING
+    # ---------------------------------------------------
     def merge_datasets(self):
-        modis = self.load_modis_data()
-        fire_daily = self.create_fire_indicator(modis)
+
+        fires = self.load_fire_data()
+        fire_daily = self.create_fire_indicator(fires)
         weather = self.load_weather_data()
 
-        print("Creating full date-district grid...")
+        fire_daily = fire_daily.rename(columns={'acq_date': 'date'})
 
-        all_dates = pd.date_range(
-            start=weather['date'].min(),
-            end=weather['date'].max()
-        )
-
-        districts = list(self.elevation_map.keys())
-
-        full_index = pd.MultiIndex.from_product(
-            [all_dates, districts],
-            names=['date', 'district']
-        )
-
-        fire_full = pd.DataFrame(index=full_index).reset_index()
-
-        fire_full = fire_full.merge(
-            fire_daily,
-            left_on=['date', 'district'],
-            right_on=['acq_date', 'district'],
-            how='left'
-        )
-
-        fire_full['fire_occurred'] = fire_full['fire_occurred'].fillna(0)
-        fire_full = fire_full.drop(columns=['acq_date'])
-
-        print("Merging weather and fire data...")
         master_df = weather.merge(
-            fire_full,
+            fire_daily,
             on=['date', 'district'],
             how='left'
         )
 
         master_df['fire_occurred'] = master_df['fire_occurred'].fillna(0)
 
-        print("Adding elevation...")
+        # Elevation mapping
         master_df['elevation'] = master_df['district'].map(self.elevation_map)
 
-        master_df = master_df.dropna()
+        # Clean rows with missing weather only
+        master_df = master_df.dropna(subset=['temp', 'humidity', 'wind'])
 
-        print("Saving master dataset...")
+        master_df['rain'] = master_df['rain'].fillna(0)
+
+        # Derived feature
+        master_df['dryness_index'] = (
+            master_df['temp'] * (100 - master_df['humidity']) / 100
+        )
+
+        master_df = master_df.sort_values(['date', 'district'])
+
+        os.makedirs(os.path.dirname(self.output_path), exist_ok=True)
+
         master_df.to_csv(self.output_path, index=False)
 
-        print("Master dataset saved successfully!")
+        print("\nMaster dataset created successfully.")
+        print("Final shape:", master_df.shape)
 
         return master_df
 
 
 if __name__ == "__main__":
+
     loader = DataLoader(
-        modis_path="data/raw/modis/",
-        weather_path="data/raw/weather.csv",
+        fires_path="data/raw/fires/",
+        weather_path="data/raw/weather/",
         output_path="data/processed/master_dataset.csv"
     )
 
-    master_df = loader.merge_datasets()
-    print(master_df.head())
+    df = loader.merge_datasets()
+    print(df.head())

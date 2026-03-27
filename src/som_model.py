@@ -1,60 +1,64 @@
+# src/som_model.py
 
 import pandas as pd
 import numpy as np
 from minisom import MiniSom
 from sklearn.preprocessing import MinMaxScaler
+import matplotlib.pyplot as plt
 
 
-class SOMMicroZone:
+class SOMModel:
 
-    def __init__(self, input_path, output_path):
-        self.input_path = input_path
-        self.output_path = output_path
+    def __init__(self, x=3, y=3, input_len=5, sigma=1.0, learning_rate=0.5):
+        self.x = x
+        self.y = y
+        self.input_len = input_len
+        self.sigma = sigma
+        self.learning_rate = learning_rate
+        self.som = None
+        self.scaler = MinMaxScaler()
 
-    def train_som(self):
+    def fit(self, df, features):
 
-        print("Loading dataset...")
-        df = pd.read_csv(self.input_path)
+        data = df[features].values
+        data_scaled = self.scaler.fit_transform(data)
 
-        features = df[['temp', 'humidity', 'wind', 'rain', 'elevation']]
-
-        print("Normalizing features...")
-        scaler = MinMaxScaler()
-        X = scaler.fit_transform(features)
-
-        print("Initializing SOM...")
-        som = MiniSom(
-            x=3,
-            y=3,
-            input_len=X.shape[1],
-            sigma=1.0,
-            learning_rate=0.5,
-            random_seed=42
+        self.som = MiniSom(
+            self.x,
+            self.y,
+            self.input_len,
+            sigma=self.sigma,
+            learning_rate=self.learning_rate
         )
 
-        som.random_weights_init(X)
-        print("Training SOM...")
-        som.train_random(X, 2000)
+        self.som.random_weights_init(data_scaled)
+        self.som.train_random(data_scaled, 1500)
 
-        print("Assigning micro-zones...")
-        winner_coordinates = np.array([som.winner(x) for x in X])
-        micro_zone = winner_coordinates[:, 0] * 3 + winner_coordinates[:, 1]
+        print("SOM training complete.")
 
-        df['micro_zone'] = micro_zone
+        labels = []
+        for row in data_scaled:
+            winner = self.som.winner(row)
+            zone_label = winner[0] * self.y + winner[1]
+            labels.append(zone_label)
 
-        print("Saving dataset with micro-zones...")
-        df.to_csv(self.output_path, index=False)
+        df['zone'] = labels
 
-        print("SOM clustering completed successfully!")
+        print("Zones created:", df['zone'].nunique())
 
         return df
 
+    def plot_som_grid(self, df, features):
 
-if __name__ == "__main__":
-    som_model = SOMMicroZone(
-        input_path="data/processed/master_dataset.csv",
-        output_path="data/processed/master_dataset_with_zones.csv"
-    )
+        data = self.scaler.transform(df[features].values)
 
-    df = som_model.train_som()
-    print(df[['district', 'micro_zone']].head())
+        plt.figure(figsize=(7,7))
+        plt.pcolor(self.som.distance_map().T, cmap='coolwarm')
+        plt.colorbar()
+
+        for i, x in enumerate(data):
+            w = self.som.winner(x)
+            plt.text(w[0]+0.5, w[1]+0.5, '.', color='black')
+
+        plt.title("SOM Distance Map (U-Matrix)")
+        plt.show()
