@@ -1,4 +1,3 @@
-data/raw/
 # Python cache
 __pycache__/
 *.py[cod]
@@ -23,10 +22,6 @@ Thumbs.db
 # VS Code
 .vscode/
 
-# Colab
-*.ipynb
-
-# Data files (optional - keep if dataset is large)
 data/
 
 # Temporary files
