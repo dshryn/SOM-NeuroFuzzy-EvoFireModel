@@ -30,14 +30,14 @@ python src/baseline_model.py
 Run SOM + Fuzzy pipeline via neuroFuzzy.ipynb
 
 ## Project Structure
-'''
+```
 src/
  ├── data_loader.py
  ├── baseline_model.py
  ├── balanced.py
  ├── som_model.py
  ├── fuzzy_model.py
- '''
+ ```
 
 ## Conclusion
 A practical soft computing approach for fire risk modeling under imbalance. Strong foundation for future improvements.
